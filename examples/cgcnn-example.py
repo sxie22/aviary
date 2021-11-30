@@ -10,6 +10,8 @@ from aviary.cgcnn.data import CrystalGraphData, collate_batch
 from aviary.cgcnn.model import CrystalGraphConvNet
 from aviary.utils import results_multitask, train_ensemble
 
+import time
+
 
 def main(
     data_path,
@@ -52,7 +54,7 @@ def main(
     device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"),
     **kwargs,
 ):
-
+    t0 = time.perf_counter()
     assert len(targets) == len(tasks) == len(losses)
 
     assert (
@@ -241,6 +243,7 @@ def main(
             device=device,
             eval_type="checkpoint",
         )
+    print((time.perf_counter() - t0) / 60, "minutes elapsed.")
 
 
 def input_parser():
