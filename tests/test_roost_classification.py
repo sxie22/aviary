@@ -13,7 +13,7 @@ from aviary.utils import results_multitask, train_ensemble
 torch.manual_seed(0)  # ensure reproducible results
 
 
-def test_single_roost_clf():
+def test_roost_clf():
     data_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         "data/roost-classification.csv"
@@ -44,8 +44,8 @@ def test_single_roost_clf():
     workers = 0
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-    task_dict = {k: v for k, v in zip(targets, tasks)}
-    loss_dict = {k: v for k, v in zip(targets, losses)}
+    task_dict = dict(zip(targets, tasks))
+    loss_dict = dict(zip(targets, losses))
 
     assert os.path.exists(data_path), f"{data_path} does not exist!"
     # NOTE make sure to use dense datasets,
@@ -163,4 +163,4 @@ def test_single_roost_clf():
 
 
 if __name__ == "__main__":
-    test_single_roost_clf()
+    test_roost_clf()

@@ -1,6 +1,5 @@
 import argparse
 import os
-import sys
 
 import pandas as pd
 import torch
@@ -72,7 +71,7 @@ def main(
 
     if ensemble > 1 and (fine_tune or transfer):
         raise NotImplementedError(
-            "If training an ensemble with fine tuning or transfering"
+            "If training an ensemble with fine tuning or transferring"
             " options the models must be trained one by one using the"
             " run-id flag."
         )
@@ -81,8 +80,8 @@ def main(
         fine_tune and transfer
     ), "Cannot fine-tune and transfer checkpoint(s) at the same time."
 
-    task_dict = {k: v for k, v in zip(targets, tasks)}
-    loss_dict = {k: v for k, v in zip(targets, losses)}
+    task_dict = dict(zip(targets, tasks))
+    loss_dict = dict(zip(targets, losses))
 
     dist_dict = {
         "radius": radius,
@@ -231,7 +230,7 @@ def main(
         }
         data_params.update(data_reset)
 
-        results_multitask(
+        return results_multitask(
             model_class=CrystalGraphConvNet,
             model_name=model_name,
             run_id=run_id,
@@ -255,17 +254,13 @@ def input_parser():
     # data inputs
     parser.add_argument(
         "--data-path",
-        type=str,
-        default="data/datasets/tests/cgcnn-regression.csv",
+        default="datasets/tests/cgcnn-regression.csv",
         metavar="PATH",
         help="Path to main data set/training set",
     )
     valid_group = parser.add_mutually_exclusive_group()
     valid_group.add_argument(
-        "--val-path",
-        type=str,
-        metavar="PATH",
-        help="Path to independent validation set",
+        "--val-path", metavar="PATH", help="Path to independent validation set"
     )
     valid_group.add_argument(
         "--val-size",
@@ -276,10 +271,7 @@ def input_parser():
     )
     test_group = parser.add_mutually_exclusive_group()
     test_group.add_argument(
-        "--test-path",
-        type=str,
-        metavar="PATH",
-        help="Path to independent test set"
+        "--test-path", metavar="PATH", help="Path to independent test set"
     )
     test_group.add_argument(
         "--test-size",
@@ -292,7 +284,6 @@ def input_parser():
     # data embeddings
     parser.add_argument(
         "--elem-emb",
-        type=str,
         default="matscholar200",
         metavar="STR/PATH",
         help="Preset embedding name or path to JSON file",
@@ -331,25 +322,21 @@ def input_parser():
 
     # task inputs
     parser.add_argument(
-        "--targets",
-        nargs="*",
-        type=str,
-        metavar="STR",
-        help="Task types for targets",
+        "--targets", nargs="+", metavar="STR", help="Task types for targets"
     )
     parser.add_argument(
         "--tasks",
         nargs="*",
+        choices=("regression", "classification"),
         default=["regression"],
-        type=str,
         metavar="STR",
         help="Task types for targets",
     )
     parser.add_argument(
         "--losses",
         nargs="*",
+        choices=("L1", "L2", "CSE"),
         default=["L1"],
-        type=str,
         metavar="STR",
         help="Loss function if regression (default: 'L1')",
     )
@@ -370,7 +357,6 @@ def input_parser():
     parser.add_argument(
         "--optim",
         default="AdamW",
-        type=str,
         metavar="STR",
         help="Optimizer used for training (default: 'AdamW')",
     )
@@ -445,14 +431,14 @@ def input_parser():
         default=0.0,
         type=float,
         metavar="FLOAT",
-        help="Minimum distance of smeared gaussian basis (default 0.0)",
+        help="Minimum distance of smeared Gaussian basis (default 0.0)",
     )
     parser.add_argument(
         "--step",
         default=0.2,
         type=float,
         metavar="FLOAT",
-        help="Step size of smeared gaussian basis (default: 0.2)",
+        help="Step size of smeared Gaussian basis (default: 0.2)",
     )
 
     # ensemble inputs
@@ -466,7 +452,6 @@ def input_parser():
     name_group = parser.add_mutually_exclusive_group()
     name_group.add_argument(
         "--model-name",
-        type=str,
         default=None,
         metavar="STR",
         help="Name for sub-directory where models will be stored",
@@ -474,7 +459,6 @@ def input_parser():
     name_group.add_argument(
         "--data-id",
         default="cgcnn",
-        type=str,
         metavar="STR",
         help="Partial identifier for sub-directory where models will be stored",
     )
@@ -489,55 +473,31 @@ def input_parser():
     # restart inputs
     use_group = parser.add_mutually_exclusive_group()
     use_group.add_argument(
-        "--fine-tune",
-        type=str,
-        metavar="PATH",
-        help="Checkpoint path for fine tuning"
+        "--fine-tune", metavar="PATH", help="Checkpoint path for fine tuning"
     )
     use_group.add_argument(
-        "--transfer",
-        type=str,
-        metavar="PATH",
-        help="Checkpoint path for transfer learning",
+        "--transfer", metavar="PATH", help="Checkpoint path for transfer learning"
     )
     use_group.add_argument(
-        "--resume",
-        action="store_true",
-        help="Resume from previous checkpoint"
+        "--resume", action="store_true", help="Resume from previous checkpoint"
     )
 
     # task type
     parser.add_argument(
-        "--evaluate",
-        action="store_true",
-        help="Evaluate the model/ensemble",
+        "--evaluate", action="store_true", help="Evaluate the model/ensemble"
     )
-    parser.add_argument(
-        "--train",
-        action="store_true",
-        help="Train the model/ensemble"
-    )
+    parser.add_argument("--train", action="store_true", help="Train the model/ensemble")
 
     # misc
+    parser.add_argument("--disable-cuda", action="store_true", help="Disable CUDA")
     parser.add_argument(
-        "--disable-cuda",
-        action="store_true",
-        help="Disable CUDA"
-    )
-    parser.add_argument(
-        "--log",
-        action="store_true",
-        help="Log training metrics to tensorboard"
+        "--log", action="store_true", help="Log training metrics to tensorboard"
     )
 
-    args = parser.parse_args(sys.argv[1:])
+    args = parser.parse_args()
 
     if args.model_name is None:
         args.model_name = f"{args.data_id}_s-{args.data_seed}_t-{args.sample}"
-
-    assert all(
-        [i in ["regression", "classification"] for i in args.tasks]
-    ), "Only `regression` and `classification` are allowed as tasks"
 
     args.device = (
         torch.device("cuda")
@@ -553,4 +513,4 @@ if __name__ == "__main__":
 
     print(f"The model will run on the {args.device} device")
 
-    main(**vars(args))
+    raise SystemExit(main(**vars(args)))

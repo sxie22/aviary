@@ -15,7 +15,7 @@ repos:
       - id: flake8
 
   - repo: https://github.com/asottile/pyupgrade
-    rev: v2.26.0
+    rev: v2.29.0
     hooks:
       - id: pyupgrade
         args: [--py37-plus]
@@ -23,6 +23,17 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.0.1
     hooks:
+      - id: check-case-conflict
+      - id: check-symlinks
+      - id: check-yaml
+      - id: destroyed-symlinks
       - id: end-of-file-fixer
-      - id: trailing-whitespace
       - id: mixed-line-ending
+      - id: trailing-whitespace
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.1.0
+    hooks:
+    - id: codespell
+      exclude_types: [json]
+      args: [--ignore-words-list, 'hist,ba']

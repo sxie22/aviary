@@ -235,7 +235,7 @@ def train_ensemble(
     model_params,
     loss_dict,
     patience=None,
-):
+) -> None:
     """
     Train multiple models
     """
@@ -391,9 +391,11 @@ def results_multitask(  # noqa: C901
             checkpoint["model_params"]["robust"] == robust
         ), f"robustness of checkpoint '{resume}' is not {robust}"
 
-        assert (
-            checkpoint["model_params"]["task_dict"] == task_dict
-        ), f"task_dict of checkpoint '{resume}' does not match current task_dict"
+        chkpt_task_dict = checkpoint["model_params"]["task_dict"]
+        assert chkpt_task_dict == task_dict, (
+            f"task_dict {chkpt_task_dict} of checkpoint '{resume}' does not match provided "
+            f"task_dict {task_dict}"
+        )
 
         model = model_class(**checkpoint["model_params"], device=device)
         model.to(device)
@@ -440,14 +442,6 @@ def results_multitask(  # noqa: C901
 
             results_dict[name]["target"] = target
 
-    if print_results:
-        for name, task in task_dict.items():
-            print(f"\nTask: '{name}' on Test Set")
-            if task == "regression":
-                print_metrics_regression(**results_dict[name])
-            elif task == "classification":
-                print_metrics_classification(**results_dict[name])
-
     # TODO cleaner way to get identifier names
     if save_results:
         save_results_dict(
@@ -456,11 +450,19 @@ def results_multitask(  # noqa: C901
             model_name,
         )
 
+    if print_results:
+        for name, task in task_dict.items():
+            print(f"\nTask: '{name}' on test set")
+            if task == "regression":
+                print_metrics_regression(**results_dict[name])
+            elif task == "classification":
+                print_metrics_classification(**results_dict[name])
+
     return results_dict
 
 
 def print_metrics_regression(target, pred, **kwargs):
-    """print out metrics for a regression task
+    """Print out metrics for a regression task.
 
     Args:
         target (ndarray(n_test)): targets for regression task
@@ -514,13 +516,26 @@ def print_metrics_regression(target, pred, **kwargs):
 
 
 def print_metrics_classification(target, logits, average="micro", **kwargs):
-    """print out metrics for a classification task
+    """Print out metrics for a classification task.
+
+    TODO make less janky, first index is for ensembles, second data, third classes.
+    always calculate metrics in the multi-class setting. How to convert binary labels
+    to multi-task automatically?
 
     Args:
         target (ndarray(n_test)): categorical encoding of the tasks
-        logits (ndarray(n_test, n_targets)): logits predicted by the model
+        logits (list[n_ens * ndarray(n_targets, n_test)]): logits predicted by the model
+        average ("micro" | "macro" | "samples" | "weighted"): Determines the type of
+            data averaging. Defaults to 'micro' which calculates metrics globally by
+            considering each element of the label indicator matrix as a label.
         kwargs: unused entries from the results dictionary
     """
+    logits = np.asarray(logits)
+    if len(logits.shape) != 3:
+        raise ValueError(
+            "please insure that the logits are of the form (n_ens, n_data, n_classes)"
+        )
+
     acc = np.zeros(len(logits))
     roc_auc = np.zeros(len(logits))
     precision = np.zeros(len(logits))
@@ -532,11 +547,13 @@ def print_metrics_classification(target, logits, average="micro", **kwargs):
 
     for j, y_logit in enumerate(logits):
 
-        acc[j] = accuracy_score(target, np.argmax(y_logit, axis=1))
+        y_pred = np.argmax(y_logit, axis=1)
+
+        acc[j] = accuracy_score(target, y_pred)
         roc_auc[j] = roc_auc_score(target_ohe, y_logit, average=average)
-        precision[j], recall[j], fscore[j] = precision_recall_fscore_support(
-            target, np.argmax(logits[j], axis=1), average=average
-        )[:3]
+        precision[j], recall[j], fscore[j], _ = precision_recall_fscore_support(
+            target, y_pred, average=average
+        )
 
     if len(logits) == 1:
         print("\nModel Performance Metrics:")
@@ -571,11 +588,13 @@ def print_metrics_classification(target, logits, average="micro", **kwargs):
         # calculate metrics and errors with associated errors for ensembles
         ens_logits = np.mean(logits, axis=0)
 
-        ens_acc = accuracy_score(target, np.argmax(ens_logits, axis=1))
+        y_pred = np.argmax(ens_logits, axis=1)
+
+        ens_acc = accuracy_score(target, y_pred)
         ens_roc_auc = roc_auc_score(target_ohe, ens_logits, average=average)
-        ens_prec, ens_recall, ens_fscore = precision_recall_fscore_support(
-            target, np.argmax(ens_logits, axis=1), average=average
-        )[:3]
+        ens_prec, ens_recall, ens_fscore, _ = precision_recall_fscore_support(
+            target, y_pred, average=average
+        )
 
         print("\nEnsemble Performance Metrics:")
         print(f"Accuracy : {ens_acc:.4f} ")
@@ -585,19 +604,19 @@ def print_metrics_classification(target, logits, average="micro", **kwargs):
         print(f"Weighted F-score   : {ens_fscore:.4f}")
 
 
-def save_results_dict(ids, results_dict, model_name):
+def save_results_dict(ids: dict, results_dict: dict, model_name: str) -> None:
     """save the results to a file after model evaluation
 
     Args:
-        idx ([str]): list of unique identifiers
-        comp ([str]): list of compositions
+        idx (dict[str, list[str, int]]): Each key is the name of an identifier (e.g.
+            material ID, composition, ...) and its value a list of IDs.
         results_dict ({name: {col: data}}): nested dictionary of results
-        model_name (str): [description]
+        model_name (str): The name given the model via the --model-name flag.
     """
     results = {}
 
-    for name in results_dict:
-        for col, data in results_dict[name].items():
+    for target_name in results_dict:
+        for col, data in results_dict[target_name].items():
 
             # NOTE we save pre_logits rather than logits due to fact
             # that with the hetroskedastic setup we want to be able to
@@ -606,14 +625,14 @@ def save_results_dict(ids, results_dict, model_name):
                 for n_ens, y_pre_logit in enumerate(data):
                     results.update(
                         {
-                            f"{name}_{col}_c{lab}_n{n_ens}": val.ravel()
+                            f"{target_name}_{col}_c{lab}_n{n_ens}": val.ravel()
                             for lab, val in enumerate(y_pre_logit.T)
                         }
                     )
 
             elif "pred" in col:
                 preds = {
-                    f"{name}_{col}_n{n_ens}": val.ravel()
+                    f"{target_name}_{col}_n{n_ens}": val.ravel()
                     for (n_ens, val) in enumerate(data)
                 }
                 results.update(preds)
@@ -621,16 +640,18 @@ def save_results_dict(ids, results_dict, model_name):
             elif "ale" in col:  # elif so that pre-logit-ale doesn't trigger
                 results.update(
                     {
-                        f"{name}_{col}_n{n_ens}": val.ravel()
+                        f"{target_name}_{col}_n{n_ens}": val.ravel()
                         for (n_ens, val) in enumerate(data)
                     }
                 )
 
             elif col == "target":
-                results.update({f"{name}_{col}": data})
+                results.update({f"{target_name}_target": data})
 
     df = pd.DataFrame({**ids, **results})
 
     file_name = model_name.replace("/", "_")
 
-    df.to_csv(index=False, path_or_buf=(f"results/multi_results_{file_name}.csv"))
+    csv_path = f"results/{file_name}.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"\nSaved model predictions to '{csv_path}'")

@@ -1,46 +1,46 @@
 import ast
 import functools
 import json
-import os
 from itertools import groupby
+from os.path import abspath, dirname, exists, join
+from typing import Dict, Sequence
 
 import numpy as np
+import pandas as pd
 import torch
-from pymatgen.core.structure import Structure
+from pymatgen.core import Structure
 from torch.utils.data import Dataset
 
 
 class CrystalGraphData(Dataset):
     def __init__(
         self,
-        df,
-        task_dict,
-        elem_emb="cgcnn92",
-        inputs=["lattice", "sites"],
-        identifiers=["material_id", "composition"],
-        radius=5,
-        max_num_nbr=12,
-        dmin=0,
-        step=0.2,
+        df: pd.DataFrame,
+        task_dict: Dict[str, str],
+        elem_emb: str = "cgcnn92",
+        inputs: Sequence[str] = ["lattice", "sites"],
+        identifiers: Sequence[str] = ["material_id", "composition"],
+        radius: float = 5,
+        max_num_nbr: int = 12,
+        dmin: float = 0,
+        step: float = 0.2,
     ):
-        """CrystalGraphData returns neighbourhood graphs
+        """Data class for CGCNN models. CrystalGraphData featurises crystal structures into
+        neighbourhood graphs
 
         Args:
-            df (Dataframe): Dataframe
-            elem_emb (str): The path to the element embedding
+            df (pd.Dataframe): Pandas dataframe holding input and target values.
             task_dict ({target: task}): task dict for multi-task learning
-            inputs (list, optional): df columns for lattice and sites.
-                Defaults to ["lattice", "sites"].
-            identifiers (list, optional): df columns for distinguishing data points.
-                Defaults to ["material_id", "composition"].
-            radius (int, optional): cut-off radius for neighbourhood.
-                Defaults to 5.
-            max_num_nbr (int, optional): maximum number of neighbours to consider.
-                Defaults to 12.
-            dmin (int, optional): minimum distance in gaussian basis.
-                Defaults to 0.
-            step (float, optional): increment size of gaussian basis.
-                Defaults to 0.2.
+            elem_emb (str, optional): One of "matscholar200", "cgcnn92", "megnet16", "onehot112" or
+                path to a file with custom element embeddings. Defaults to "matscholar200".
+            inputs (list, optional): df columns for lattice and sites. Defaults to
+                ["lattice", "sites"].
+            identifiers (list, optional): df columns for distinguishing data points. Will be
+                copied over into the model's output CSV. Defaults to ["material_id", "composition"].
+            radius (float, optional): Cut-off radius for neighbourhood. Defaults to 5.
+            max_num_nbr (int, optional): maximum number of neighbours to consider. Defaults to 12.
+            dmin (float, optional): minimum distance in Gaussian basis. Defaults to 0.
+            step (float, optional): increment size of gaussian basis. Defaults to 0.2.
         """
         assert len(identifiers) == 2, "Two identifiers are required"
         assert len(inputs) == 2, "One input column required are required"
@@ -53,12 +53,11 @@ class CrystalGraphData(Dataset):
         self.max_num_nbr = max_num_nbr
 
         if elem_emb in ["matscholar200", "cgcnn92", "megnet16", "onehot112"]:
-            elem_emb = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)),
-                f"../embeddings/element/{elem_emb}.json",
+            elem_emb = join(
+                dirname(abspath(__file__)), f"../embeddings/element/{elem_emb}.json"
             )
         else:
-            assert os.path.exists(elem_emb), f"{elem_emb} does not exist!"
+            assert exists(elem_emb), f"{elem_emb} does not exist!"
 
         with open(elem_emb) as f:
             self.elem_features = json.load(f)
@@ -94,7 +93,7 @@ class CrystalGraphData(Dataset):
             crystal ([Structure]): pymatgen structure to get neighbours for
         """
         self_idx, nbr_idx, _, nbr_dist = crystal.get_neighbor_list(
-            self.radius, numerical_tol=1e-8,
+            self.radius, numerical_tol=1e-8
         )
 
         if self.max_num_nbr is not None:
@@ -113,36 +112,33 @@ class CrystalGraphData(Dataset):
         return self_idx, nbr_idx, nbr_dist
 
     def _pre_check(self):
-        """Check that none of the structures have isolated atoms.
+        """Check that none of the structures have isolated atoms."""
 
-        Raises:
-            ValueError: if isolated structures are present
-        """
         print("Precheck that all structures are valid")
-        all_iso = []
-        some_iso = []
+        all_isolated = []
+        some_isolated = []
 
         for cif_id, crystal in zip(self.df["material_id"], self.df["Structure_obj"]):
             self_idx, nbr_idx, _ = self._get_nbr_data(crystal)
 
             if len(self_idx) == 0:
-                all_iso.append(cif_id)
+                all_isolated.append(cif_id)
             elif len(nbr_idx) == 0:
-                all_iso.append(cif_id)
+                all_isolated.append(cif_id)
             elif set(self_idx) != set(range(crystal.num_sites)):
-                some_iso.append(cif_id)
+                some_isolated.append(cif_id)
 
-        if (len(all_iso) > 0) or (len(some_iso) > 0):
+        if not (all_isolated == some_isolated == []):
             # drop the data points that do not give rise to dense crystal graphs
-            self.df = self.df.drop(self.df[self.df["material_id"].isin(all_iso)].index)
-            self.df = self.df.drop(self.df[self.df["material_id"].isin(some_iso)].index)
+            isolated = {*all_isolated, *some_isolated}  # set union
+            self.df = self.df[~self.df["material_id"].isin(isolated)]
 
-            print(all_iso)
-            print(some_iso)
+            print(f"all atoms in these structure are isolated: {all_isolated}")
+            print(f"these structure have some isolated atoms: {some_isolated}")
 
     @functools.lru_cache(maxsize=None)  # Cache loaded structures
     def __getitem__(self, idx):
-        # NOTE sites must be given in fractional co-ordinates
+        # NOTE sites must be given in fractional coordinates
         df_idx = self.df.iloc[idx]
         crystal = df_idx["Structure_obj"]
         cry_ids = df_idx[self.identifiers]
@@ -307,8 +303,8 @@ def get_structure(cols):
     """Return pymatgen structure from lattice and sites cols"""
     cell, sites = cols
     cell, elems, coords = parse_cgcnn(cell, sites)
-    # NOTE getting primative structure before constructing graph
-    # significantly harms the performnace of this model.
+    # NOTE getting primitive structure before constructing graph
+    # significantly harms the performance of this model.
     return Structure(lattice=cell, species=elems, coords=coords, to_unit_cell=True)
 
 

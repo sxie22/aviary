@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from matminer.featurizers.conversions import StrToComposition
 from pymatgen.analysis.phase_diagram import PDEntry, PhaseDiagram
-from pymatgen.core.composition import Composition
+from pymatgen.core import Composition
 from sklearn.metrics import r2_score
 
 plt.rcParams.update({"font.size": 20})
@@ -35,16 +35,12 @@ def get_spg(num):
 # scatter plots
 
 # TAATA
-df_test = pd.read_csv(
-    "data/datasets/taata/taata-c-test.csv", comment="#", na_filter=False
-)
+df_test = pd.read_csv("datasets/taata/taata-c-test.csv", comment="#", na_filter=False)
 df_test = StrToComposition(target_col_id="composition_obj").featurize_dataframe(
     df_test, "composition"
 )
 
-df_hull = pd.read_csv(
-    "data/datasets/taata/taata-c-train.csv", comment="#", na_filter=False
-)
+df_hull = pd.read_csv("datasets/taata/taata-c-train.csv", comment="#", na_filter=False)
 df_hull = StrToComposition(target_col_id="composition_obj").featurize_dataframe(
     df_hull, "composition"
 )
@@ -70,7 +66,7 @@ df_test["spacegroup"] = df_test["wyckoff"].apply(get_spg)
 spg = df_test["spacegroup"].values
 sort = np.argsort(spg)
 
-fig, ax_scatter = plt.subplots(2, 2, figsize=(20, 15),)
+fig, ax_scatter = plt.subplots(2, 2, figsize=(20, 15))
 
 titles = ["Roost", r"Wren\ (This\ Work)", "CGCNN", "CGCNN"]
 reps = [
@@ -148,12 +144,8 @@ for i, (title, rep, f) in enumerate(zip(titles, reps, fs)):
     ax_scatter[j, k].set_yticks((0, 1, 2, 3))
 
     ax_scatter[j, k].annotate(
-        r"$\bf{Input: {%s}}$" % (rep)
-        + "\n"
-        + r"$\bf{Model: {%s}}$" % (title)
-        + "\n"
-        + r"$R^2$"
-        + f" = {r2:.2f}\nMAE = {mae:.2f}\nRMSE = {rmse:.2f}",
+        f"$\\bf{{Input: {rep}}}$\n$\\bf{{Model: {title}}}$\n "
+        f"$R^2$ = {r2:.2f}\n MAE = {mae:.2f}\n RMSE = {rmse:.2f}",
         (0.05, 0.72),
         xycoords="axes fraction",
     )
@@ -165,4 +157,3 @@ plt.subplots_adjust(wspace=-0.4)
 plt.savefig("examples/plots/pdf/taata-c-hull-all.pdf")
 
 plt.show()
-# %%
