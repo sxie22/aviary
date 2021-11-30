@@ -1,30 +1,15 @@
-import ast
 import functools
-import json
-from os.path import abspath, dirname, exists, join
-from itertools import groupby
 
 import numpy as np
 import torch
-from pymatgen.core.structure import Structure
 from torch.utils.data import Dataset
 
-from aviary.cgcnn.data import GaussianDistance, get_structure
+from aviary.cgcnn.data import CrystalGraphData
 
 
-class GlobalsData(Dataset):
+class GlobalsData(CrystalGraphData):
     def __init__(
-        self,
-        df,
-        task_dict,
-        elem_emb="cgcnn92",
-        inputs=["lattice", "sites"],
-        glob_fea=[],
-        identifiers=["material_id", "composition"],
-        radius=5,
-        max_num_nbr=12,
-        dmin=0,
-        step=0.2,
+        self, *args, **kwargs
     ):
         """CrystalGraphData returns neighbourhood graphs
 
@@ -45,102 +30,9 @@ class GlobalsData(Dataset):
             step (float, optional): increment size of gaussian basis.
                 Defaults to 0.2.
         """
-        assert len(identifiers) == 2, "Two identifiers are required"
-        assert len(inputs) == 2, "One input column required are required"
-
-        self.inputs = inputs
-        self.task_dict = task_dict
-        self.identifiers = identifiers
-        self.glob_fea = glob_fea
-        
-        print("Globals:", len(glob_fea))
-
-        self.radius = radius
-        self.max_num_nbr = max_num_nbr
-
-        if elem_emb in ["matscholar200", "cgcnn92", "megnet16", "onehot112"]:
-            elem_emb = join(
-                dirname(abspath(__file__)), f"../../embeddings/element/{elem_emb}.json"
-            )
-        else:
-            assert exists(elem_emb), f"{elem_emb} does not exist!"
-
-        with open(elem_emb) as f:
-            self.elem_features = json.load(f)
-
-        for key, value in self.elem_features.items():
-            self.elem_features[key] = np.array(value, dtype=float)
-
-        self.elem_emb_len = len(list(self.elem_features.values())[0])
-
-        self.gdf = GaussianDistance(dmin=dmin, dmax=self.radius, step=step)
-        self.nbr_fea_dim = self.gdf.embedding_size
-
-        self.df = df
-        self.df["Structure_obj"] = self.df[inputs].apply(get_structure, axis=1)
-
-        self._pre_check()
-
-        self.n_targets = []
-        for target in self.task_dict:
-            if self.task_dict[target] == "regression":
-                self.n_targets.append(1)
-            elif self.task == "classification":
-                n_classes = np.max(self.df[target].values) + 1
-                self.n_targets.append(n_classes)
-
-    def __len__(self):
-        return len(self.df)
-
-    def _get_nbr_data(self, crystal):
-        """get neighbours for every site
-
-        Args:
-            crystal ([Structure]): pymatgen structure to get neighbours for
-        """
-        self_idx, nbr_idx, _, nbr_dist = crystal.get_neighbor_list(
-            self.radius, numerical_tol=1e-8
-        )
-
-        if self.max_num_nbr is not None:
-            _self_idx, _nbr_idx, _nbr_dist = [], [], []
-
-            for i, g in groupby(zip(self_idx, nbr_idx, nbr_dist), key=lambda x: x[0]):
-                s, n, d = zip(*sorted(g, key=lambda x: x[2]))
-                _self_idx.extend(s[: self.max_num_nbr])
-                _nbr_idx.extend(n[: self.max_num_nbr])
-                _nbr_dist.extend(d[: self.max_num_nbr])
-
-            self_idx = np.array(_self_idx)
-            nbr_idx = np.array(_nbr_idx)
-            nbr_dist = np.array(_nbr_dist)
-
-        return self_idx, nbr_idx, nbr_dist
-
-    def _pre_check(self):
-        """Check that none of the structures have isolated atoms."""
-
-        print("Precheck that all structures are valid")
-        all_iso = []
-        some_iso = []
-
-        for cif_id, crystal in zip(self.df["material_id"], self.df["Structure_obj"]):
-            self_idx, nbr_idx, _ = self._get_nbr_data(crystal)
-
-            if len(self_idx) == 0:
-                all_iso.append(cif_id)
-            elif len(nbr_idx) == 0:
-                all_iso.append(cif_id)
-            elif set(self_idx) != set(range(crystal.num_sites)):
-                some_iso.append(cif_id)
-
-        if (len(all_iso) > 0) or (len(some_iso) > 0):
-            # drop the data points that do not give rise to dense crystal graphs
-            self.df = self.df.drop(self.df[self.df["material_id"].isin(all_iso)].index)
-            self.df = self.df.drop(self.df[self.df["material_id"].isin(some_iso)].index)
-
-            print(all_iso)
-            print(some_iso)
+        self.glob_fea = kwargs.pop("glob_fea")
+        super().__init__(*args, **kwargs)
+        print("Globals:", ",".join(self.glob_fea))
 
     @functools.lru_cache(maxsize=None)  # Cache loaded structures
     def __getitem__(self, idx):
@@ -153,7 +45,8 @@ class GlobalsData(Dataset):
         site_atoms = [atom.species.as_dict() for atom in crystal]
         atom_fea = np.vstack(
             [
-                np.sum([self.elem_features[el] * int(amt) for el, amt in site.items()], axis=0)
+                np.sum([self.elem_features[el] * float(amt)
+                        for el, amt in site.items()], axis=0)
                 for site in site_atoms
             ]
         )
@@ -382,7 +275,6 @@ def collate_dense(dataset_list):
     batch_targets = []
     batch_comps = []
     batch_cif_ids = []
-    base_idx = 0
 
     for i, (inputs, target, comp, cif_id) in enumerate(dataset_list):
 
@@ -390,17 +282,11 @@ def collate_dense(dataset_list):
         batch_targets.append(target)
         batch_comps.append(comp)
         batch_cif_ids.append(cif_id)
-    
-#    dense_fea = torch.cat(batch_fea, dim=1)
-#    dense_fea = batch_fea
     dense_fea = torch.stack(batch_fea, dim=0)
-   
-    
+
     return (
         (dense_fea, ),
         tuple(torch.stack(b_target, dim=0) for b_target in zip(*batch_targets)),
         batch_comps,
         batch_cif_ids,
     )
-
-
