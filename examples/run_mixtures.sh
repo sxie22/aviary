@@ -2,8 +2,11 @@
 
 k=$1 
 n=$2 # 64
-g=$4 # 2
-targets=$6
+g=$3 # 2
+targets=$4
+tag=$5
+shift 5
+options="$@"
 
 embed=cgcnn92
 epochs=500
@@ -14,7 +17,7 @@ nu=${targets}
 tasks="regression"
 losses="L1"
 
-leaf=${targets}_${k}-${n}-${h}-${g}-${d}
+leaf=${targets}_${k}-${n}-${g}
 tag=${leaf}
 
 mkdir results/${nu}
@@ -28,7 +31,7 @@ echo $d >> results/${nu}/${tag}/${tag}_log.txt
 echo $g >> results/${nu}/${tag}/${tag}_log.txt
 echo $r >> results/${nu}/${tag}/${tag}_log.txt
 
-python mixtures-example.py \
+python examples/mixtures-example.py \
 --train \
 --evaluate \
 --data-seed 0 \
@@ -44,11 +47,6 @@ python mixtures-example.py \
 --n-graph $g \
 --elem-emb $embed \
 --model-name $tag \
---delimiter "+"\
---hom-edges \
---het-edges \
---comp-nodes \
---elem-nodes \
  | tee -a -i results/${nu}/${tag}/${tag}_log.txt;
  cp models/${tag}/* results/${nu}/${tag}/. --backup=numbered
  rm -r models/${tag}
